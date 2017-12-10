@@ -133,8 +133,8 @@ def get_loop_sequences(bm, uv_layer):
         return [lp, ln]
 
 
+    # | ---- |
     # % ---- %   <- next_poly_loop_pair
-    # |      |
     # x ---- x   <- next_loop_pair
     # |      |
     # o ---- o   <- pair
@@ -142,9 +142,15 @@ def get_loop_sequences(bm, uv_layer):
         v1 = pair[0].vert
         v2 = pair[1].vert
         for l1 in v1.link_loops:
+            if l1 == pair[0]:
+                continue
             for l2 in v2.link_loops:
+                if l2 == pair[1]:
+                    continue
                 if l1.link_loop_next == l2:
                     return [l1, l2]
+                elif l1.link_loop_prev == l2:
+                      return [l1, l2]
         # no next poly loop is found
         return None
 
@@ -175,6 +181,7 @@ def get_loop_sequences(bm, uv_layer):
                 nplp_isl_grp = get_island_group_include_pair(nplp, island_info)
                 if nplp_isl_grp != isl_grp:
                     break       # another island
+
                 seqs.append(nplp)
 
                 p = nplp
@@ -220,7 +227,9 @@ def get_loop_sequences(bm, uv_layer):
     isl_info = muv_common.get_island_info_from_bmesh(bm, False)
     get_loop_pairs(first_loop, loop_pairs, uv_layer, parsed_loops)
     loop_pairs = sort_loop_pairs(loop_pairs)
+#    pprint(loop_pairs)
     loop_seqs = get_loop_sequence(loop_pairs, isl_info)
+    # pprint(loop_seqs)
     if not loop_seqs:
         return None, "Failed to get loop sequence"
 
@@ -380,8 +389,18 @@ class MUV_AUVStraighten(bpy.types.Operator):
         default=False
     )
     vertical = BoolProperty(
-        name="Vertex Influence in Vertical Direction",
+        name="Vert-Infl (Vertical)",
         description="Align vertical direction influenced by mesh vertex proportion",
+        default=False
+    )
+    horizontal = BoolProperty(
+        name="Vert-Infl (Horizontal)",
+        description="Align horizontal direction influenced by mesh vertex proportion",
+        default=False
+    )
+    select = BoolProperty(
+        name="Select",
+        description="Select UVs which are aligned",
         default=False
     )
 
@@ -402,6 +421,8 @@ class MUV_AUVStraighten(bpy.types.Operator):
             self.report({'WARNING'}, error)
             return {'CANCELLED'}
 
+        #pprint(loop_seqs)
+
         # align
         base_uv = loop_seqs[0][0][0][uv_layer].uv.copy()
         h_uv = loop_seqs[-1][0][1][uv_layer].uv.copy() - base_uv
@@ -412,23 +433,45 @@ class MUV_AUVStraighten(bpy.types.Operator):
             for hidx, hseq in enumerate(loop_seqs):
                 # pair[loop]
                 for vidx in range(0, len(hseq), 2):
-                    pair1 = hseq[vidx]
-                    pair2 = hseq[vidx+1]
-                    hdiff_uv_0 = hidx * h_uv / len(loop_seqs)
-                    hdiff_uv_1 = (hidx + 1) * h_uv / len(loop_seqs)
-                    if self.vertical:
-                        diff_base_vert = loop_seqs[0][-1][0].vert.co - loop_seqs[0][0][0].vert.co
-                        diff_vert_1 = pair1.vert.co - loop_seqs[0][0][0].vert.co
-                        diff_vert_2 = pair2.vert.co - loop_seqs[0][0][0].vert.co
-                        vdiff_uv_0 = v_uv * diff_vert_1.length / diff_base_vert.length
-                        vdiff_uv_1 = v_uv * diff_vert_2.length / diff_base_vert.legth
+                    loops = [
+                        hseq[vidx][0],
+                        hseq[vidx][1],
+                        hseq[vidx+1][0],
+                        hseq[vidx+1][1]
+                    ]
+                    if self.horizontal:
+                        # TODO
+                        hdiff_uvs = [
+                            hidx * h_uv / len(loop_seqs),
+                            (hidx + 1) * h_uv / len(loop_seqs),
+                            hidx * h_uv / len(loop_seqs),
+                            (hidx + 1) * h_uv / len(loop_seqs),
+                        ]
                     else:
-                        vdiff_uv_0 = int(vidx/2) * v_uv / (len(hseq) / 2)
-                        vdiff_uv_1 = int((vidx/2)+1) * v_uv / (len(hseq) / 2)
-                    pair1[0][uv_layer].uv = base_uv + hdiff_uv_0 + vdiff_uv_0
-                    pair1[1][uv_layer].uv = base_uv + hdiff_uv_1 + vdiff_uv_0
-                    pair2[0][uv_layer].uv = base_uv + hdiff_uv_0 + vdiff_uv_1
-                    pair2[1][uv_layer].uv = base_uv + hdiff_uv_1 + vdiff_uv_1
+                        hdiff_uvs = [
+                            hidx * h_uv / len(loop_seqs),
+                            (hidx + 1) * h_uv / len(loop_seqs),
+                            hidx * h_uv / len(loop_seqs),
+                            (hidx + 1) * h_uv / len(loop_seqs),
+                        ]
+                    if self.vertical:
+                        diff_base_vert_0 = loop_seqs[0][-1][0].vert.co - loop_seqs[0][0][0].vert.co
+                        diff_base_vert_1 = loop_seqs[0][-1][1].vert.co - loop_seqs[0][0][1].vert.co
+                        diff_verts = [l.vert.co - loop_seqs[0][0][0].vert.co for l in loops]
+                        vdiff_uvs = [v_uv * dv.length / diff_base_vert.length for dv in diff_verts]
+                    else:
+                        vdiff_uvs = [
+                            int(vidx / 2) * v_uv / (len(hseq) / 2),
+                            int(vidx / 2) * v_uv / (len(hseq) / 2),
+                            int((vidx / 2) + 1) * v_uv / (len(hseq) / 2),
+                            int((vidx / 2) + 1) * v_uv / (len(hseq) / 2)
+                        ]
+
+                    for l, vdiff, hdiff in zip(loops, vdiff_uvs, hdiff_uvs):
+                        l[uv_layer].uv = base_uv + hdiff + vdiff
+                        if self.select:
+                            l[uv_layer].select = True
+
         # only selected UV loop sequence will be aligned
         else:
             for hidx, hseq in enumerate(loop_seqs):
@@ -438,6 +481,9 @@ class MUV_AUVStraighten(bpy.types.Operator):
                 hdiff_uv_1 = (hidx + 1) * h_uv / len(loop_seqs)
                 pair[0][uv_layer].uv = base_uv + hdiff_uv_0
                 pair[1][uv_layer].uv = base_uv + hdiff_uv_1
+                if self.select:
+                    pair[0][uv_layer].select = True
+                    pair[1][uv_layer].select = True
 
 
         bmesh.update_edit_mesh(obj.data)
