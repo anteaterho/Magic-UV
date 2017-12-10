@@ -29,7 +29,7 @@ from math import atan2, tan, sin, cos
 import bpy
 import bmesh
 from mathutils import Vector
-from bpy.props import EnumProperty
+from bpy.props import EnumProperty, BoolProperty
 
 from pprint import pprint
 
@@ -38,62 +38,8 @@ from . import muv_common
 
 
 
-def get_vert_loop(bm, uv_layer):
-    sel_faces = [f for f in bm.faces if f.select]
+def get_loop_sequences(bm, uv_layer):
 
-    # get candidate loops
-    cand_loops = []
-    for f in sel_faces:
-        for l in f.loops:
-            if l[uv_layer].select:
-                cand_loops.append(l)
-
-    if len(cand_loops) == 0:
-        return
-
-    # first_vert = cand_loops[0].vert
-    # pairs = []
-    # parsed_verts = []
-
-    # def find_linked(v, ps, uv_layer, parsed):
-    #     parsed.append(v)
-    #     for l in v.link_loops:
-    #         ov = l.link_loop_next.vert
-    #         # if there is same pair, skip it
-    #         found = False
-    #         for p in ps:
-    #             if (v in p) and (ov in p):
-    #                 found = True
-    #
-    #         if l[uv_layer].select:
-    #             if l.link_loop_next[uv_layer].select:
-    #                 if not found:
-    #                     ps.append([l.vert, l.link_loop_next.vert])
-    #                 if not l.link_loop_next.vert in parsed:
-    #                     find_linked(l.link_loop_next.vert, ps, uv_layer, parsed)
-    #
-    #         ov = l.link_loop_prev.vert
-    #         # if there is same pair, skip it
-    #         found = False
-    #         for p in ps:
-    #             if (v in p) and (ov in p):
-    #                 found = True
-    #                 break
-    #
-    #         if l[uv_layer].select:
-    #             if l.link_loop_prev[uv_layer].select:
-    #                 if not found:
-    #                     ps.append([l.vert, l.link_loop_prev.vert])
-    #                 if not l.link_loop_prev.vert in parsed:
-    #                     find_linked(l.link_loop_prev.vert, ps, uv_layer, parsed)
-    #
-    # find_linked(first_vert, pairs, uv_layer, parsed_verts)
-
-
-
-    first_loop = cand_loops[0]
-    loop_pairs = []
-    parsed_loops = []
     def get_loop_pairs(l, pairs, uv_layer, parsed):
         parsed.append(l)
         for ll in l.vert.link_loops:
@@ -126,6 +72,7 @@ def get_vert_loop(bm, uv_layer):
                     pairs.append([ll, llp])
                 if not llp in parsed:
                     get_loop_pairs(llp, pairs, uv_layer, parsed)
+
 
     # sort pair by vert
     # (v0, v1) - (v1, v2) - (v2, v3) ....
@@ -165,6 +112,7 @@ def get_vert_loop(bm, uv_layer):
 
         return sorted_pairs
 
+
     # x ---- x   <- next_loop_pair
     # |      |
     # o ---- o   <- pair
@@ -184,6 +132,7 @@ def get_vert_loop(bm, uv_layer):
                 return None
         return [lp, ln]
 
+
     # % ---- %   <- next_poly_loop_pair
     # |      |
     # x ---- x   <- next_loop_pair
@@ -200,13 +149,13 @@ def get_vert_loop(bm, uv_layer):
         return None
 
 
+    # get loop sequence in the same island
     def get_loop_sequence(pairs, island_info):
-        loop_seqs = {}
+        loop_sequences = []
         for pair in pairs:
             seqs = [pair]
             p = pair
-            isl_grp = get_island_group_by_pair(pair, island_info)
-            print(isl_grp)
+            isl_grp = get_island_group_include_pair(pair, island_info)
             if isl_grp == -1:
                 return None     # error
 
@@ -214,7 +163,7 @@ def get_vert_loop(bm, uv_layer):
                 nlp = get_next_loop_pair(p)
                 if not nlp:
                     break       # no more loop pair
-                nlp_isl_grp = get_island_group_by_pair(nlp, island_info)
+                nlp_isl_grp = get_island_group_include_pair(nlp, island_info)
                 if nlp_isl_grp != isl_grp:
                     break       # another island
 
@@ -223,22 +172,18 @@ def get_vert_loop(bm, uv_layer):
                 nplp = get_next_poly_loop_pair(nlp)
                 if not nplp:
                     break       # no more loop pair
-                nplp_isl_grp = get_island_group_by_pair(nplp, island_info)
+                nplp_isl_grp = get_island_group_include_pair(nplp, island_info)
                 if nplp_isl_grp != isl_grp:
                     break       # another island
                 seqs.append(nplp)
 
                 p = nplp
 
-            for seq in seqs:
-                seq[0][uv_layer].select = True
-                seq[1][uv_layer].select = True
-            pprint(seqs)
-
-        #print(loop_seqs)
+            loop_sequences.append(seqs)
+        return loop_sequences
 
 
-    def get_island_group(loop, island_info):
+    def get_island_group_include_loop(loop, island_info):
         for i, isl in enumerate(island_info):
             for f in isl['faces']:
                 for l in f['face'].loops:
@@ -247,9 +192,9 @@ def get_vert_loop(bm, uv_layer):
         return -1
 
 
-    def get_island_group_by_pair(pair, island_info):
-        l1_grp = get_island_group(pair[0], island_info)
-        l2_grp = get_island_group(pair[1], island_info)
+    def get_island_group_include_pair(pair, island_info):
+        l1_grp = get_island_group_include_loop(pair[0], island_info)
+        l2_grp = get_island_group_include_loop(pair[1], island_info)
 
         if (l1_grp == -1) or (l2_grp == -1) or (l1_grp != l2_grp):
             return -1
@@ -257,68 +202,30 @@ def get_vert_loop(bm, uv_layer):
         return l1_grp
 
 
+    sel_faces = [f for f in bm.faces if f.select]
+
+    # get candidate loops
+    cand_loops = []
+    for f in sel_faces:
+        for l in f.loops:
+            if l[uv_layer].select:
+                cand_loops.append(l)
+
+    if len(cand_loops) < 2:
+        return None, "More than 2 UVs must be selected"
+
+    first_loop = cand_loops[0]
+    loop_pairs = []
+    parsed_loops = []
     isl_info = muv_common.get_island_info_from_bmesh(bm, False)
     get_loop_pairs(first_loop, loop_pairs, uv_layer, parsed_loops)
     loop_pairs = sort_loop_pairs(loop_pairs)
-    get_loop_sequence(loop_pairs, isl_info)
+    loop_seqs = get_loop_sequence(loop_pairs, isl_info)
+    if not loop_seqs:
+        return None, "Failed to get loop sequence"
 
-    #pprint(loop_pairs)
-    #pprint(next_loop_pairs)
+    return loop_seqs, ""
 
-
-
-    return
-
-    # pick up first loop
-    #first_loop = cand_loops[0]
-    #ordered_loops = [first_loop]
-    for l in cand_loops:
-        if l[uv_layer].select and l.link_loop_next[uv_layer].select:
-            first_loop = l
-            break
-    else:
-        return
-
-    ordered_loop = [first_loop]
-    loop = first_loop
-    while True:
-
-
-        if not loop:
-            print("break")
-            break
-        loop_next = loop.link_loop_next
-        if loop[uv_layer].select and loop_next[uv_layer].select:
-            print("--------------")
-            print("PAIR")
-            print(loop)
-            print(loop_next)
-            print("OTHER")
-            next_vert = loop_next.vert
-            for l in next_vert.link_loops:
-                if loop_next != l:
-                    print(l)
-                    if l[uv_layer].select:
-                        loop = l
-                        break
-            else:
-                break
-            continue
-        loop_prev = loop.link_loop_prev
-        if loop[uv_layer].select and loop_prev[uv_layer].select:
-            prev
-        break
-
-    print("FIN")
-    return
-
-    # pick up first loop
-    vert_loop = []
-    loop = cand_loops[0]
-    vert = loop.vert
-    sel_loop = [l for l in vert.link_loops if l[uv_layer].select]
-    vert_loop.append({vert: sel_loop})
-    pprint(vert_loop)
 
 class MUV_AUVCircle(bpy.types.Operator):
 
@@ -362,10 +269,6 @@ class MUV_AUVCircle(bpy.types.Operator):
         obj = context.active_object
         bm = bmesh.from_edit_mesh(obj.data)
         uv_layer = bm.loops.layers.uv.verify()
-
-        get_vert_loop(bm, uv_layer)
-        bmesh.update_edit_mesh(obj.data)
-        return {'CANCELLED'}
 
         sel_faces = [f for f in bm.faces if f.select]
 
@@ -471,6 +374,17 @@ class MUV_AUVStraighten(bpy.types.Operator):
     bl_description = "Straighten UV coordinates"
     bl_options = {'REGISTER', 'UNDO'}
 
+    transmission = BoolProperty(
+        name="Transmission",
+        description="Align horizontal direction",
+        default=False
+    )
+    vertical = BoolProperty(
+        name="Vertex Influence in Vertical Direction",
+        description="Align vertical direction influenced by mesh vertex proportion",
+        default=False
+    )
+
     @classmethod
     def poll(cls, context):
         return context.mode == 'EDIT_MESH'
@@ -478,52 +392,53 @@ class MUV_AUVStraighten(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
         bm = bmesh.from_edit_mesh(obj.data)
+        if muv_common.check_version(2, 73, 0) >= 0:
+            bm.faces.ensure_lookup_table()
         uv_layer = bm.loops.layers.uv.verify()
 
-        sel_faces = [f for f in bm.faces if f.select]
-
-        # get candidate loops
-        cand_loops = []
-        for f in sel_faces:
-            for l in f.loops:
-                if l[uv_layer].select:
-                    cand_loops.append(l)
-
-        # find first loop
-        ordered_loops = []
-        for l in cand_loops:
-            if not l.link_loop_prev in cand_loops:
-                ordered_loops.append(l)
-                break
-        else:
-            self.report({'WARNING'}, "Selected UVs are looped")
-            return {'CANCELLED'}
-
-        # order loops
-        next_ = ordered_loops[0].link_loop_next
-        while True:
-            if not next_[uv_layer].select:
-                break
-            if next_ in ordered_loops:
-                self.report({'WARNING'}, "Selected UVs are looped")
-                return {'CANCELLED'}
-            ordered_loops.append(next_)
-            next_ = next_.link_loop_next
-
-        if len(ordered_loops) != len(cand_loops):
-            self.report({'WARNING'}, "Isolated UVs are found (Expected {0} but {1})".format(len(ordered_loops), len(cand_loops)))
-            return {'CANCELLED'}
-
-        if len(ordered_loops) < 3:
-            self.report({'WARNING'}, "More than 3 UVs must be selected")
+        # loop_seqs[horizontal][vertical][loop]
+        loop_seqs, error = get_loop_sequences(bm, uv_layer)
+        if not loop_seqs:
+            self.report({'WARNING'}, error)
             return {'CANCELLED'}
 
         # align
-        first_uv = ordered_loops[0][uv_layer].uv.copy()
-        last_uv = ordered_loops[-1][uv_layer].uv.copy()
-        for i, l in enumerate(ordered_loops):
-            diff = last_uv - first_uv
-            l[uv_layer].uv = first_uv + diff * i / (len(ordered_loops) - 1)
+        base_uv = loop_seqs[0][0][0][uv_layer].uv.copy()
+        h_uv = loop_seqs[-1][0][1][uv_layer].uv.copy() - base_uv
+        v_uv = loop_seqs[0][-1][0][uv_layer].uv.copy() - base_uv
+        # selected and paralleled UV loop sequence will be aligned
+        if self.transmission:
+            # hseq[vertical][loop]
+            for hidx, hseq in enumerate(loop_seqs):
+                # pair[loop]
+                for vidx in range(0, len(hseq), 2):
+                    pair1 = hseq[vidx]
+                    pair2 = hseq[vidx+1]
+                    hdiff_uv_0 = hidx * h_uv / len(loop_seqs)
+                    hdiff_uv_1 = (hidx + 1) * h_uv / len(loop_seqs)
+                    if self.vertical:
+                        diff_base_vert = loop_seqs[0][-1][0].vert.co - loop_seqs[0][0][0].vert.co
+                        diff_vert_1 = pair1.vert.co - loop_seqs[0][0][0].vert.co
+                        diff_vert_2 = pair2.vert.co - loop_seqs[0][0][0].vert.co
+                        vdiff_uv_0 = v_uv * diff_vert_1.length / diff_base_vert.length
+                        vdiff_uv_1 = v_uv * diff_vert_2.length / diff_base_vert.legth
+                    else:
+                        vdiff_uv_0 = int(vidx/2) * v_uv / (len(hseq) / 2)
+                        vdiff_uv_1 = int((vidx/2)+1) * v_uv / (len(hseq) / 2)
+                    pair1[0][uv_layer].uv = base_uv + hdiff_uv_0 + vdiff_uv_0
+                    pair1[1][uv_layer].uv = base_uv + hdiff_uv_1 + vdiff_uv_0
+                    pair2[0][uv_layer].uv = base_uv + hdiff_uv_0 + vdiff_uv_1
+                    pair2[1][uv_layer].uv = base_uv + hdiff_uv_1 + vdiff_uv_1
+        # only selected UV loop sequence will be aligned
+        else:
+            for hidx, hseq in enumerate(loop_seqs):
+                # selected loop pair
+                pair = hseq[0]
+                hdiff_uv_0 = hidx * h_uv / len(loop_seqs)
+                hdiff_uv_1 = (hidx + 1) * h_uv / len(loop_seqs)
+                pair[0][uv_layer].uv = base_uv + hdiff_uv_0
+                pair[1][uv_layer].uv = base_uv + hdiff_uv_1
+
 
         bmesh.update_edit_mesh(obj.data)
 
